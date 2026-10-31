@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>P1 Meter</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232a78d6'/%3E%3Cpath d='M18 4 8 18h7l-1 10 10-14h-7z' fill='%23fff'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true"><rect width="32" height="32" rx="7" fill="var(--s1)"/><path d="M18 4 8 18h7l-1 10 10-14h-7z" fill="#fff"/></svg>
+    <span>P1 Meter</span>
+  </div>
+  <nav id="nav" aria-label="Sections">
+    <button data-tab="live">Live</button>
+    <button data-tab="history">History</button>
+    <button data-tab="logs">Logs</button>
+    <button data-tab="device">Device</button>
+  </nav>
+  <div class="top-right">
+    <span id="status" class="pill" title="Connection to the meter"><i></i><span>…</span></span>
+    <button id="theme" class="icon-btn" title="Theme: auto / light / dark" aria-label="Toggle theme">Auto</button>
+  </div>
+</header>
+
+<main>
+<!-- ============ LIVE ============ -->
+<section id="tab-live" class="tab">
+  <div id="setup-banner" class="card banner" hidden>
+    <b>Connect your meter first.</b> Go to <a href="#device">Device → Connection</a>, enter the meter's IP address and press “Pair”.
+  </div>
+
+  <div class="card" id="live-ctl">
+    <div id="live-idle" class="form-row">
+      <div class="grow-block">
+        <b>Live tracking</b>
+        <div class="muted fine">Off by default. While on, the Pi polls the meter at the interval you choose, then stops by itself. The session is saved as a log.</div>
+      </div>
+      <label>Every
+        <select id="lv-int"><option value="1">1 s</option><option value="2" selected>2 s</option><option value="5">5 s</option><option value="10">10 s</option><option value="30">30 s</option></select>
+      </label>
+      <label>For at most
+        <select id="lv-min"><option value="5">5 min</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">1 hour</option><option value="120">2 hours</option><option value="180" selected>3 hours</option><option value="360">6 hours</option><option value="custom">Custom…</option></select>
+      </label>
+      <label id="lv-custom-wrap" hidden>Minutes<input id="lv-custom" type="number" min="1" max="1440" value="45" style="width:5rem"></label>
+      <button id="lv-start" class="primary">Start live tracking</button>
+      <button id="lv-once" title="Ask the meter once, without starting a session">Read once</button>
+    </div>
+    <div id="live-on" class="row" hidden>
+      <span class="pill ok"><i></i><span id="lv-text"></span></span>
+      <span id="lv-left" class="muted"></span>
+      <button id="lv-stop" class="danger">Stop</button>
+      <a href="#logs" class="fine">Saved as a log</a>
+    </div>
+    <div id="lv-msg" class="status"></div>
+  </div>
+
+  <div class="grid live-top">
+    <div class="card hero">
+      <div class="label">Power right now</div>
+      <div class="hero-val"><span id="hero-num">–</span><span id="hero-unit">W</span></div>
+      <div id="hero-sub" class="hero-sub">Waiting for data…</div>
+      <div class="phases" id="phases"></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Power</h2>
+        <div class="seg" id="live-window">
+          <button data-s="300">5 min</button><button data-s="900" class="on">15 min</button><button data-s="3600">1 h</button><button data-s="7200">2 h</button>
+        </div>
+      </div>
+      <div id="chart-live"></div>
+    </div>
+  </div>
+
+  <div class="stats" id="today-stats"></div>
+
+  <div class="grid two">
+    <div class="card"><div class="card-head"><h2>Electricity today <small>per hour</small></h2></div><div id="chart-today-el"></div></div>
+    <div class="card"><div class="card-head"><h2>Gas today <small>per hour</small></h2></div><div id="chart-today-gas"></div></div>
+  </div>
+
+  <div class="stats" id="meter-stats"></div>
+</section>
+
+<!-- ============ HISTORY ============ -->
+<section id="tab-history" class="tab">
+  <div class="toolbar card">
+    <div class="seg" id="range-seg">
+      <button data-r="10m">10 min</button>
+      <button data-r="1h">1 h</button>
+      <button data-r="6h">6 h</button>
+      <button data-r="24h">24 h</button>
+      <button data-r="yesterday">Yesterday</button>
+      <button data-r="today">Today</button>
+      <button data-r="7d">7 days</button>
+      <button data-r="30d">30 days</button>
+    </div>
+    <div class="daynav">
+      <button id="day-prev" class="icon-btn" title="Previous day" aria-label="Previous day">‹</button>
+      <input type="date" id="day-pick" aria-label="Pick a day">
+      <button id="day-next" class="icon-btn" title="Next day" aria-label="Next day">›</button>
+    </div>
+    <div class="range-custom">
+      <input type="date" id="rg-from" aria-label="From"> <span>to</span> <input type="date" id="rg-to" aria-label="To">
+      <button id="rg-go">Show</button>
+    </div>
+    <div id="hist-label" class="hist-label"></div>
+    <div class="toolbar-row2">
+      <span class="muted fine">Detail</span>
+      <div class="seg" id="res-seg">
+        <button data-res="auto" class="on">Auto</button><button data-res="raw">Raw</button><button data-res="60">1 min</button><button data-res="300">5 min</button><button data-res="900">15 min</button><button data-res="3600">1 h</button><button data-res="86400">1 day</button>
+      </div>
+      <span id="res-note" class="muted fine"></span>
+      <span id="zoom-bar" hidden><span class="pill"><i></i><span>Zoomed in</span></span> <button id="zoom-back" class="tool">Back</button> <button id="zoom-reset" class="tool">Show whole period</button></span>
+    </div>
+  </div>
+  <div class="stats" id="hist-stats"></div>
+  <div class="panel-bar"><b>Panels</b><span class="muted fine">drag on a chart to zoom in · click legend entries to show or hide · Edit changes what a panel shows</span><span class="grow"></span><button id="panel-add" class="primary">+ Add panel</button><button id="panel-reset" class="tool">Reset to defaults</button></div>
+  <div id="panels" class="panels"></div>
+  <p class="muted fine" id="hist-foot"></p>
+</section>
+
+<!-- ============ LOGS ============ -->
+<section id="tab-logs" class="tab">
+  <div class="card" id="master-card"></div>
+
+  <div class="card">
+    <div class="card-head"><h2>Start a new log</h2></div>
+    <form id="log-form" class="form-row">
+      <label>Name<input id="lf-name" placeholder="e.g. Washing machine" maxlength="80"></label>
+      <label>Interval
+        <select id="lf-int">
+          <option value="1">1 s</option><option value="2">2 s</option><option value="5">5 s</option><option value="10" selected>10 s</option>
+          <option value="30">30 s</option><option value="60">1 min</option><option value="300">5 min</option><option value="custom">Custom…</option>
+        </select>
+      </label>
+      <label id="lf-custom-wrap" hidden>Seconds<input id="lf-custom" type="number" min="1" max="3600" value="15" style="width:5rem"></label>
+      <label>Stop automatically
+        <select id="lf-stop">
+          <option value="0">Never</option><option value="5">after 5 min</option><option value="15">after 15 min</option><option value="30">after 30 min</option>
+          <option value="45">after 45 min</option><option value="60">after 1 hour</option><option value="120">after 2 hours</option><option value="180">after 3 hours</option>
+          <option value="240">after 4 hours</option><option value="360">after 6 hours</option><option value="720">after 12 hours</option><option value="custom">Custom…</option>
+        </select>
+      </label>
+      <label id="lf-stop-wrap" hidden>Minutes<input id="lf-stop-custom" type="number" min="1" max="43200" value="90" style="width:5.5rem"></label>
+      <label class="grow">Note<input id="lf-note" placeholder="optional"></label>
+      <button class="primary" type="submit">Start logging</button>
+    </form>
+    <div id="lf-msg" class="status"></div>
+    <p class="muted fine">A log records the fields chosen under Global tracking when it starts (all fields if tracking was never set up) and is saved as <code>name-timestamp.csv</code> in <code>data/logs/user/</code>.</p>
+  </div>
+
+  <div id="log-list"></div>
+  <div id="log-detail"></div>
+</section>
+
+<!-- ============ DEVICE ============ -->
+<section id="tab-device" class="tab">
+  <div class="grid two">
+    <div class="card" id="card-conn">
+      <div class="card-head"><h2>Connection</h2></div>
+      <div class="form-row">
+        <label class="grow">Meter address<input id="host" placeholder="192.168.1.50" autocomplete="off"></label>
+        <button id="save-host">Save</button>
+        <button id="pair" class="primary">Pair</button>
+        <button id="forget">Forget token</button>
+      </div>
+      <div class="status" id="conn"></div>
+      <p class="muted fine">Pairing creates one local user (<code>local/p1-go-app</code>) on the meter. Press the button on the meter when asked.</p>
+    </div>
+    <div class="card" id="card-info"><div class="card-head"><h2>Device</h2><button id="info-reload" class="tool">Reload</button></div><div id="info-body" class="kv">Loading…</div></div>
+  </div>
+
+  <div class="grid two">
+    <div class="card" id="card-sys">
+      <div class="card-head"><h2>Device settings</h2></div>
+      <div id="sys-body">Loading…</div>
+    </div>
+    <div class="card" id="card-bat">
+      <div class="card-head"><h2>Plug-in batteries</h2></div>
+      <div id="bat-body">Loading…</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Users on the meter</h2><button id="users-reload" class="tool">Reload</button></div>
+    <div id="users-body">Loading…</div>
+  </div>
+
+  <div class="grid two">
+    <div class="card">
+      <div class="card-head"><h2>Raw API</h2></div>
+      <div class="row">
+        <button data-get="measurement" class="primary">Measurement</button>
+        <button data-get="device">Device</button>
+        <button data-get="system">System</button>
+        <button data-get="telegram">Telegram</button>
+        <button data-get="batteries">Batteries</button>
+        <button data-get="users">Users</button>
+        <button id="all" class="primary">Everything</button>
+      </div>
+      <div class="status" id="dstatus"></div>
+      <div class="cards" id="cards"></div>
+      <pre id="out">Nothing yet.</pre>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>App settings</h2></div>
+      <form id="price-form" class="form-col">
+        <p class="muted fine">Used for cost estimates in Live and History. Enter your all-in prices (incl. tax).</p>
+        <label>Currency symbol<input id="pr-cur" maxlength="4" style="width:5rem"></label>
+        <label>Electricity import / kWh<input id="pr-imp" type="number" step="0.001"></label>
+        <label>Electricity export (feed-in) / kWh<input id="pr-exp" type="number" step="0.001"></label>
+        <label>Gas / m³<input id="pr-gas" type="number" step="0.001"></label>
+        <div><button class="primary" type="submit">Save prices</button> <span id="pr-msg" class="status"></span></div>
+      </form>
+      <form id="label-form" class="form-col" style="margin-top:1.2rem;border-top:1px solid var(--line);padding-top:1rem">
+        <h2>Names</h2>
+        <p class="muted fine">Say which tariff is which, for example “Low (night)” and “High (day)”. Names are used in charts, tiles and field lists. You can also rename other fields.</p>
+        <label>Tariff 1 is called<input id="lb-t1" maxlength="40" placeholder="tariff 1"></label>
+        <label>Tariff 2 is called<input id="lb-t2" maxlength="40" placeholder="tariff 2"></label>
+        <details><summary class="fine">Rename other fields</summary><div id="lb-list" class="form-col" style="margin-top:.5rem"></div></details>
+        <div><button class="primary" type="submit">Save names</button> <span id="lb-msg" class="status"></span></div>
+      </form>
+      <p class="muted fine" id="app-foot"></p>
+    </div>
+  </div>
+</section>
+</main>
+
+<div id="toast" role="status" aria-live="polite"></div>
+<script src="charts.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

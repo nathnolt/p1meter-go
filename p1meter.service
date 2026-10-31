@@ -1,0 +1,16 @@
+[Unit]
+Description=P1 meter dashboard and logger
+After=network-online.target time-sync.target
+Wants=network-online.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/p1meter
+ExecStart=/home/pi/p1meter/p1meter -addr :8001 -data /home/pi/p1meter/data
+# Optional: protect the UI with a password
+# Environment=P1_AUTH=admin:change-me
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
