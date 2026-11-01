@@ -201,3 +201,18 @@ func TestPanelValidation(t *testing.T) {
 		t.Fatal("reset should give defaults")
 	}
 }
+
+func TestCalculatedFieldsAllowed(t *testing.T) {
+	ok := []string{"calc:rate:gas_m3", "calc:delta:energy_import_kwh", "calc:diff:power_l1_w|power_l2_w", "calc:diff:use:import|use:export", "calc:diff:rd:gas_m3|rd:water_m3"}
+	bad := []string{"calc:rate:power_w", "calc:rate:tariff", "calc:delta:nope", "calc:diff:power_w|power_w", "calc:diff:power_w|calc:rate:gas_m3", "calc:what:gas_m3", "calc:diff:power_w"}
+	for _, id := range ok {
+		if !allowedPanelField(id) {
+			t.Errorf("%s should be allowed", id)
+		}
+	}
+	for _, id := range bad {
+		if allowedPanelField(id) {
+			t.Errorf("%s should be rejected", id)
+		}
+	}
+}

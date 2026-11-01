@@ -87,31 +87,43 @@
 <!-- ============ HISTORY ============ -->
 <section id="tab-history" class="tab">
   <div class="toolbar card">
-    <div class="seg" id="range-seg">
-      <button data-r="10m">10 min</button>
-      <button data-r="1h">1 h</button>
-      <button data-r="6h">6 h</button>
-      <button data-r="24h">24 h</button>
-      <button data-r="yesterday">Yesterday</button>
-      <button data-r="today">Today</button>
-      <button data-r="7d">7 days</button>
-      <button data-r="30d">30 days</button>
+    <div class="tb-group">
+      <span class="tb-label">Period</span>
+      <div class="seg scroll" id="range-seg">
+        <button data-r="10m">10 min</button>
+        <button data-r="1h">1 h</button>
+        <button data-r="6h">6 h</button>
+        <button data-r="24h">24 h</button>
+        <button data-r="yesterday">Yesterday</button>
+        <button data-r="today">Today</button>
+        <button data-r="7d">7 days</button>
+        <button data-r="30d">30 days</button>
+      </div>
     </div>
-    <div class="daynav">
-      <button id="day-prev" class="icon-btn" title="Previous day" aria-label="Previous day">‹</button>
-      <input type="date" id="day-pick" aria-label="Pick a day">
-      <button id="day-next" class="icon-btn" title="Next day" aria-label="Next day">›</button>
+    <div class="tb-group">
+      <span class="tb-label">Single day</span>
+      <div class="daynav">
+        <button id="day-prev" class="icon-btn" title="Previous day" aria-label="Previous day">‹</button>
+        <input type="date" id="day-pick" aria-label="Pick a day">
+        <button id="day-next" class="icon-btn" title="Next day" aria-label="Next day">›</button>
+      </div>
     </div>
-    <div class="range-custom">
-      <input type="date" id="rg-from" aria-label="From"> <span>to</span> <input type="date" id="rg-to" aria-label="To">
-      <button id="rg-go">Show</button>
+    <div class="tb-group">
+      <span class="tb-label">Date range</span>
+      <div class="range-custom">
+        <label>From<input type="date" id="rg-from"></label>
+        <label>To<input type="date" id="rg-to"></label>
+        <button id="rg-go">Show</button>
+      </div>
     </div>
-    <div id="hist-label" class="hist-label"></div>
-    <div class="toolbar-row2">
-      <span class="muted fine">Detail</span>
-      <div class="seg" id="res-seg">
+    <div class="tb-group">
+      <span class="tb-label">Detail</span>
+      <div class="seg scroll" id="res-seg">
         <button data-res="auto" class="on">Auto</button><button data-res="raw">Raw</button><button data-res="60">1 min</button><button data-res="300">5 min</button><button data-res="900">15 min</button><button data-res="3600">1 h</button><button data-res="86400">1 day</button>
       </div>
+    </div>
+    <div class="tb-foot">
+      <div id="hist-label" class="hist-label"></div>
       <span id="res-note" class="muted fine"></span>
       <span id="zoom-bar" hidden><span class="pill"><i></i><span>Zoomed in</span></span> <button id="zoom-back" class="tool">Back</button> <button id="zoom-reset" class="tool">Show whole period</button></span>
     </div>

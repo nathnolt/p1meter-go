@@ -12,7 +12,7 @@ import (
 )
 
 // Panel is one user-defined chart on the History and log pages.
-// Types: line | area | step | band (line with lowest…highest band) | bar | stacked | pie | donut.
+// Types: line | area | step | band (line with lowest…highest band) | bar | stacked | pie | donut | stat (big values).
 type Panel struct {
 	ID     string   `json:"id"`
 	Name   string   `json:"name"`
@@ -21,6 +21,8 @@ type Panel struct {
 	Scale  string   `json:"scale"`  // auto | normalized
 	Band   bool     `json:"band"`   // legacy: same as Type "band"
 	Zero   string   `json:"zero"`   // auto | yes | no: does the value axis start at zero?
+	Agg    string   `json:"agg"`    // value shown by "stat" panels / the values row: last | avg | min | max | sum
+	Values bool     `json:"values"` // show the values above the chart
 	Width  string   `json:"width"`  // half | full
 	Height string   `json:"height"` // small | medium | large
 	// Labels renames fields inside this panel only (field id -> text)
@@ -37,6 +39,21 @@ func allowedPanelField(id string) bool {
 			if id == "use:"+u {
 				return true
 			}
+		}
+	case strings.HasPrefix(id, "calc:"):
+		// calc:delta:<meter reading> | calc:rate:<meter reading> | calc:diff:<field>|<field>
+		parts := strings.SplitN(id, ":", 3)
+		if len(parts) != 3 {
+			return false
+		}
+		switch parts[1] {
+		case "delta", "rate":
+			i, ok := fieldIdx[parts[2]]
+			return ok && Fields[i].Kind == Counter
+		case "diff":
+			ab := strings.Split(parts[2], "|")
+			return len(ab) == 2 && ab[0] != ab[1] && !strings.HasPrefix(ab[0], "calc:") && !strings.HasPrefix(ab[1], "calc:") &&
+				allowedPanelField(ab[0]) && allowedPanelField(ab[1])
 		}
 	case strings.HasPrefix(id, "rd:"):
 		i, ok := fieldIdx[id[3:]]
@@ -102,7 +119,8 @@ func cleanPanels(in []Panel) ([]Panel, error) {
 		if len(p.Name) > 60 {
 			p.Name = p.Name[:60]
 		}
-		p.Type = pick(p.Type, "line", "area", "step", "band", "bar", "stacked", "pie", "donut")
+		p.Type = pick(p.Type, "line", "area", "step", "band", "bar", "stacked", "pie", "donut", "stat")
+		p.Agg = pick(p.Agg, "last", "avg", "min", "max", "sum")
 		p.Zero = pick(p.Zero, "auto", "yes", "no")
 		p.Scale = pick(p.Scale, "auto", "normalized")
 		p.Width = pick(p.Width, "half", "full")

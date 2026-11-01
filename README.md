@@ -80,16 +80,22 @@ History and each log's *View* page are made of **panels**. A panel is a chart yo
 
 - **Add / edit / delete:** *+ Add panel*, or *Edit* on a panel. The editor has a live preview that uses the data on screen. ↑ ↓ move a panel, *Reset to defaults* restores the starting set.
 - **Chart types** (the editor shows a small picture of each): line, area, step line, **line + variability band** (the shaded lowest…highest range per bucket, now for any measurement), bars, stacked bars, **pie** and **donut**. Width (half / full) and height are also yours to choose.
+- **Calculated fields** (meter readings only show the running total, so these show what changed):
+  - *Change between points*: how much a counter grew from one point to the next, e.g. gas used.
+  - *Rate per hour*: that change divided by the time: gas flow in m³/h, or import/export power in kW from the meter's counters.
+  - *Difference A − B*: any two fields with the same unit, e.g. Power L1 − Power L2.
+  - Ready-made ones (gas flow, water flow, power from the import/export meter) are in the field list; the builder under it makes your own. They follow the **Detail** setting: gas only updates every few minutes, so use 5 min or coarser to get a smooth gas flow.
+- **Values only** panels show big numbers instead of a chart: pick the fields and whether to show the last value, average, lowest, highest or total of the period on screen. Any other chart can show the same numbers in a row above it (*Show the values above the chart*), so one panel can hold values and a chart.
 - **Pie / donut:** every field is a slice. Measurements give their average over the period, usage and meter readings the amount used. All slices must have the same unit (e.g. kWh with kWh), for instance import tariff 1 vs tariff 2, or power per phase.
 - **Value axis:** per panel, *Automatic*, *Starts at zero* or *Fits the data (not from zero)*.
 - **Names:** under **Device → Names** say what your tariffs are called (e.g. “Low (night)” and “High (day)”); that name is used everywhere (charts, tiles, field lists). You can rename any other field there too. Inside a panel's editor you can override the name of a field for that chart only.
-- **Fields** (up to 8 per panel, drawn on top of each other):
+- **Fields** (up to 8 per panel, drawn on top of each other; *Calculated* is described below):
   - *Measurements*: total power, power / voltage / current per phase, frequency.
   - *Usage per period*: electricity imported / fed back (and per tariff), gas, water used in each time bucket.
   - *Meter readings*: the meter counters themselves (import, export, gas, water, tariff).
 - **Mixed units:** fields with different units (say power and gas) are shown with **each field scaled to 0–100 %** so you can compare their shapes. Hover to see the real values. You can also force this for same-unit fields. (There are no dual axes on purpose.)
 - **Periods:** 10 min, 1 h, 6 h, 24 h, Yesterday, Today, 7 days, 30 days, any single day (‹ ›) or a date range.
-- **Zoom:** drag across any chart; the app asks the server again, so zooming shows finer detail, down to every logged sample. *Back* and *Show whole period* undo it.
+- **Zoom:** drag across any chart (on a phone: swipe sideways across it, or use the ‹ − + › buttons above each chart; tap a chart to see its values); the app asks the server again, so zooming shows finer detail, down to every logged sample. *Back* and *Show whole period* undo it.
 - **Detail** (Auto / Raw / 1 min / 5 min / 15 min / 1 h / 1 day) sets the line averages and the size of the usage buckets. You cannot get finer detail than the interval the data was logged at.
 - Click legend entries to show or hide a series (remembered in the browser). *Table* shows the numbers. A panel only shows fields that are in your CSV files, so untracked fields appear as "no data".
 

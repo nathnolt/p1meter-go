@@ -349,10 +349,11 @@
         }
         show(ev);
       });
-      ov.addEventListener("pointerleave", () => { if (!drag) hide(); });
+      ov.addEventListener("pointerleave", (ev) => { if (!drag && ev.pointerType !== "touch") hide(); });
       if (o.zoomable !== false && (this.kind === "line" || o.onZoom)) {
         ov.addEventListener("pointerdown", (ev) => {
           if (ev.button !== 0) return;
+          if (ev.pointerType === "touch") show(ev); // a tap shows the values
           drag = { x0: local(ev), x: local(ev) };
           ov.setPointerCapture(ev.pointerId);
           hide();
@@ -362,6 +363,7 @@
           const a = Math.min(drag.x0, drag.x), b = Math.max(drag.x0, drag.x);
           drag = null;
           sel.style.display = "none";
+          if (b - a <= 10 && ev.pointerType === "touch") show(ev);
           if (b - a > 10) {
             const ta = x0 + ((a - m.l) / iw) * (x1 - x0), tb = x0 + ((b - m.l) / iw) * (x1 - x0);
             if (o.onZoom) { o.onZoom(ta, tb); return; } // the page re-queries at finer detail
@@ -454,6 +456,15 @@
     renderTools() {
       const el = this.toolsEl;
       el.innerHTML = "";
+      if (this.o.onZoom && this.o.xDomain) {
+        // buttons for touch screens (and mice): step the visible period, the page then loads it in finer detail
+        const [a, b] = this.xRange(), w = b - a, c = (a + b) / 2, z = this.o.onZoom;
+        const mkb = (txt, title, fn) => { const bt = html("button", "tool zb", el, txt); bt.type = "button"; bt.title = title; bt.setAttribute("aria-label", title); bt.onclick = fn; };
+        mkb("‹", "Earlier", () => z(a - w / 2, b - w / 2));
+        mkb("−", "Zoom out", () => z(c - w, c + w));
+        mkb("+", "Zoom in", () => z(c - w / 4, c + w / 4));
+        mkb("›", "Later", () => z(a + w / 2, b + w / 2));
+      }
       if (this.view) {
         const b = html("button", "tool", el, "Reset zoom");
         b.type = "button";

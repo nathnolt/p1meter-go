@@ -290,3 +290,42 @@ svg .pie-total { fill: var(--text); font-size: 1.15rem; font-weight: 680; }
 .tbtn.on { border-color: var(--s1); box-shadow: 0 0 0 2px color-mix(in srgb, var(--s1) 30%, transparent); color: var(--text); font-weight: 600; }
 .nrow { display: grid !important; grid-template-columns: 7.5rem 1fr; gap: .5rem; align-items: center; flex-direction: row !important; }
 .nrow span { font-size: .72rem; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* history toolbar: labelled groups that wrap instead of overflowing */
+.toolbar { display: flex; flex-wrap: wrap; gap: .9rem 1.6rem; align-items: flex-start; padding: .8rem 1rem; }
+.tb-group { display: flex; flex-direction: column; gap: .3rem; min-width: 0; }
+.tb-label { font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); font-weight: 600; }
+.range-custom { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; color: var(--text-2); }
+.range-custom label { display: flex; flex-direction: column; gap: .15rem; font-size: .75rem; color: var(--text-3); }
+.range-custom input { min-width: 0; }
+.daynav input { min-width: 0; }
+.seg.scroll { max-width: 100%; overflow-x: auto; scrollbar-width: thin; }
+.seg.scroll button { flex: none; }
+.tb-foot { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: .4rem 1rem; padding-top: .6rem; border-top: 1px solid var(--line); }
+.tb-foot .hist-label { margin-left: 0; }
+.tb-foot #zoom-bar { margin-left: auto; }
+.pvals:empty { display: none; }
+.pvals { margin-bottom: .6rem; }
+.pstats { margin: 0; }
+@media (max-width: 700px) {
+  main { padding: .7rem .7rem 3rem; }
+  .tb-group { width: 100%; }
+  .daynav { display: flex; }
+  .daynav input { flex: 1; width: 100%; }
+  .range-custom label { flex: 1 1 8rem; }
+  .range-custom input { width: 100%; }
+  .range-custom button { flex: 1 1 100%; }
+  .card { padding: .8rem .8rem; }
+  .top { padding: .5rem .7rem; gap: .5rem; }
+  .stats { grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); }
+  .chart-legend { gap: .1rem .7rem; }
+}
+/* chart tools: own row above the chart, with zoom / pan buttons */
+.chart { display: flex; flex-direction: column; }
+.chart-tools { position: static; order: -1; align-self: flex-end; flex-wrap: wrap; justify-content: flex-end; margin-bottom: .25rem; }
+.chart-legend { padding-right: 0; }
+.chart-tools .tool.zb { min-width: 2rem; font-size: 1rem; line-height: 1; padding: .2rem .5rem; }
+.calcbuild { margin-top: .6rem; padding-top: .5rem; border-top: 1px dashed var(--line); display: flex; flex-direction: column; gap: .4rem; }
+.calcbuild .row { flex-wrap: wrap; gap: .4rem; }
+.calcbuild select { flex: 1 1 8rem; min-width: 0; max-width: 100%; }
+.calcbuild .row span { color: var(--text-3); font-size: .85rem; }

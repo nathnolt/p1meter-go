@@ -9,7 +9,7 @@ cd "$(dirname "$0")"
 
 TARGET="${1:-arm64}"
 PI_USER="${PI_USER:-pi}"
-VERSION="${VERSION:-1.3.1}"
+VERSION="${VERSION:-1.4.0}"
 
 case "$TARGET" in
   arm64) export GOOS=linux GOARCH=arm64 ;;

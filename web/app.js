@@ -214,23 +214,60 @@
   ];
   const FDEFS = {};
   FGROUPS.forEach((gr) => gr[1].forEach((f) => (FDEFS[f.id] = f)));
-  const axisKey = (f) => f.unit + "|" + f.src;
+
+  // ---- calculated fields: calc:delta:<reading> (change between points), calc:rate:<reading> (per hour), calc:diff:<A>|<B> (A − B)
+  const calcCache = {};
+  function calcDef(id) {
+    const m = id.match(/^calc:(delta|rate|diff):(.+)$/);
+    if (!m) return null;
+    const kind = m[1];
+    if (kind === "diff") {
+      const [a, b] = m[2].split("|"), A = FDEFS[a], B = FDEFS[b];
+      if (!A || !B) return null;
+      return { id, src: "calc", kind, axis: A.src, a: A, b: B, unit: A.unit, dec: Math.max(A.dec, B.dec), color: "s6", tn: 0, base: A.base + " − " + B.base };
+    }
+    const S = FDEFS["rd:" + m[2]];
+    if (!S) return null;
+    const rate = kind === "rate";
+    return { id, src: "calc", kind, axis: rate ? "rate" : "use", from: S, unit: rate ? (S.unit === "kWh" ? "kW" : S.unit + "/h") : S.unit,
+      dec: rate ? 3 : S.dec, color: S.color, tn: S.tn, base: S.base + (rate ? " per hour" : " change") };
+  }
+  const defOf = (id) => FDEFS[id] || (id.startsWith("calc:") ? (calcCache[id] ||= calcDef(id)) : null);
+  const isUsageOnly = (f) => f.src === "use" || (f.kind === "diff" && f.a.src === "use" && f.b.src === "use");
+  const needsRd = (id) => id.startsWith("rd:") || id.startsWith("calc:delta:") || id.startsWith("calc:rate:") || (id.startsWith("calc:diff:") && id.includes("rd:"));
+  const CALC_PRESETS = ["calc:rate:gas_m3", "calc:delta:gas_m3", "calc:rate:energy_import_kwh", "calc:rate:energy_export_kwh", "calc:rate:water_m3", "calc:delta:water_m3"];
+  const CALC_NAMES = {
+    "calc:rate:gas_m3": "Gas flow", "calc:delta:gas_m3": "Gas used (change)", "calc:rate:energy_import_kwh": "Import power (from meter)",
+    "calc:rate:energy_export_kwh": "Export power (from meter)", "calc:rate:water_m3": "Water flow", "calc:delta:water_m3": "Water used (change)",
+  };
+
+  const axisKey = (f) => f.unit + "|" + (f.axis || f.src);
   // names: panel override > global name (Device → Names) > default (+ tariff name)
   const tName = (n, long) => LABELS["tariff:" + n] || (long ? "tariff " + n : "T" + n);
-  const fieldLabel = (f, p) => (p && p.labels && p.labels[f.id]) || LABELS[f.id] || (f.tn ? f.base + ", " + tName(f.tn, true) : f.base);
+  function fieldLabel(f, p) {
+    const own = (p && p.labels && p.labels[f.id]) || LABELS[f.id];
+    if (own) return own;
+    if (f.src === "calc") {
+      if (CALC_NAMES[f.id]) return CALC_NAMES[f.id];
+      if (f.kind === "diff") return fieldLabel(f.a, p) + " − " + fieldLabel(f.b, p);
+      return fieldLabel(f.from, p) + (f.kind === "rate" ? " per hour" : " change");
+    }
+    return f.tn ? f.base + ", " + tName(f.tn, true) : f.base;
+  }
   const isBandPanel = (p) => p.type === "band" || p.band;
   const isPie = (p) => p.type === "pie" || p.type === "donut";
   const TYPES = [
     ["line", "Line"], ["area", "Area"], ["step", "Step line"], ["band", "Line + variability band"],
-    ["bar", "Bars"], ["stacked", "Stacked bars"], ["pie", "Pie"], ["donut", "Donut"],
+    ["bar", "Bars"], ["stacked", "Stacked bars"], ["pie", "Pie"], ["donut", "Donut"], ["stat", "Values only"],
   ];
+  const AGGS = { last: "last value", avg: "average", min: "lowest", max: "highest", sum: "total" };
   const HEIGHTS = { small: 200, medium: 260, large: 340 };
 
   let PANELS = [];
   const forced = { rd: false, ranges: new Set() }; // data the editor needs before a panel is saved
-  const gaugeNeedsRange = (id) => FDEFS[id] && FDEFS[id].src === "g" && id !== "power_w";
+  const gaugeNeedsRange = (id) => { const f = defOf(id); return f && f.src === "g" && id !== "power_w"; };
   const rangeList = () => [...new Set([...forced.ranges, ...PANELS.filter(isBandPanel).flatMap((p) => p.fields.filter(gaugeNeedsRange))])];
-  const needReadings = () => forced.rd || PANELS.some((p) => p.fields.some((f) => f.startsWith("rd:")));
+  const needReadings = () => forced.rd || PANELS.some((p) => p.fields.some(needsRd));
   const extraQuery = () => (needReadings() ? "&readings=1" : "") + (rangeList().length ? "&ranges=" + rangeList().join(",") : "");
   const panelsReady = (async () => { const r = await api("GET", "/api/panels"); if (r.panels) PANELS = r.panels; })();
 
@@ -261,58 +298,107 @@
     }
     return out;
   }
+  // the numbers of a field, aligned with x (the series time axis, or the usage buckets when needSeries is false)
+  function valuesFor(f, d, x, needSeries) {
+    const s = d.series, u = d.usage;
+    if (f.src === "g") return s[f.key];
+    if (f.src === "rd") return s.rd ? s.rd[f.key] : null;
+    if (f.src === "use") { const a = u[f.key]; return a && needSeries ? stepMap(u, a, x) : a; }
+    if (f.kind === "diff") {
+      const a = valuesFor(f.a, d, x, needSeries), b = valuesFor(f.b, d, x, needSeries);
+      return a && b ? a.map((v, i) => (v == null || b[i] == null ? null : v - b[i])) : null;
+    }
+    // delta / rate: change of a meter reading between consecutive points (never negative)
+    const r = s.rd ? s.rd[f.from.key] : null;
+    if (!r) return null;
+    return r.map((v, i) => {
+      if (i === 0 || v == null || r[i - 1] == null) return null;
+      const dv = Math.max(0, v - r[i - 1]);
+      return f.kind === "rate" ? dv / ((s.t[i] - s.t[i - 1]) / 3600) : dv;
+    });
+  }
   const panelMode = (p) => {
-    const defs = p.fields.map((id) => FDEFS[id]).filter(Boolean);
+    const defs = p.fields.map(defOf).filter(Boolean);
     const same = new Set(defs.map(axisKey)).size <= 1;
     return { defs, same, normalized: p.scale === "normalized" || !same };
   };
   const fmtF = (f) => (v) => nf(v, f.dec) + (f.unit ? " " + f.unit : "");
 
+  // ---- big values (the "Values only" type, and the optional row above a chart)
+  function statTiles(p, d) {
+    const defs = p.fields.map(defOf).filter(Boolean);
+    const colors = colorsFor(defs);
+    if (!d || !d.series || !d.summary.samples) return '<div class="muted fine">No data logged in this period.</div>';
+    return defs.map((f, i) => {
+      const needSeries = !isUsageOnly(f);
+      const x = needSeries ? d.series.t : d.usage.t;
+      const arr = valuesFor(f, d, x, needSeries);
+      const idx = [];
+      (arr || []).forEach((v, k) => { if (v != null) idx.push(k); });
+      const label = esc(fieldLabel(f, p));
+      if (!idx.length) return tile(label, "–", "", needsRd(f.id) && !d.series.rd ? "loading…" : "no data in this period", colors[i]);
+      const vals = idx.map((k) => arr[k]);
+      let v, sub = AGGS[p.agg] || AGGS.last;
+      if (p.agg === "avg") v = vals.reduce((a, b) => a + b, 0) / vals.length;
+      else if (p.agg === "min") v = Math.min(...vals);
+      else if (p.agg === "max") v = Math.max(...vals);
+      else if (p.agg === "sum") v = vals.reduce((a, b) => a + b, 0);
+      else { v = vals[vals.length - 1]; sub += " · " + hm(x[idx[idx.length - 1]], 0); }
+      return tile(label, nf(v, f.dec), f.unit, sub, colors[i]);
+    }).join("");
+  }
+  function drawStat(host, p, d) {
+    clearHost(host);
+    host.innerHTML = `<div class="stats pstats">${statTiles(p, d)}</div>`;
+  }
+  function clearHost(host) {
+    if (host.__chart && host.__chart.ro) host.__chart.ro.disconnect();
+    host.__chart = null;
+  }
+
   // pie / donut: every field becomes a slice (average for measurements, total used for usage, used-in-period for meter readings)
-  function drawPie(host, p, d) {
-    const defs = p.fields.map((id) => FDEFS[id]).filter((f) => f && f.id !== "rd:tariff");
+  function drawPie(host, p, d, ctx) {
+    const defs = p.fields.map(defOf).filter((f) => f && f.id !== "rd:tariff");
     if (!defs.length) return empty(host, "Pick at least one field.");
     if (!d || !d.series || !d.summary.samples) return empty(host, "No data logged in this period.");
     if (new Set(defs.map((f) => f.unit)).size > 1) return empty(host, "Pie and donut charts need fields with the same unit (for example kWh with kWh).");
-    const s = d.series, u = d.usage, colors = colorsFor(defs);
-    const nn = (a) => (a || []).filter((v) => v != null);
+    const colors = colorsFor(defs);
     const slices = defs.map((f, i) => {
+      const needSeries = !isUsageOnly(f);
+      const arr = (valuesFor(f, d, needSeries ? d.series.t : d.usage.t, needSeries) || []).filter((v) => v != null);
+      const mode = f.src === "g" ? "avg" : f.src === "use" ? "sum" : f.src === "rd" ? "span" : f.kind === "delta" ? "sum" : "avg";
       let v = 0;
-      if (f.src === "g") { const a = nn(s[f.key]); v = a.length ? Math.max(0, a.reduce((x, y) => x + y, 0) / a.length) : 0; }
-      else if (f.src === "use") v = nn(u[f.key]).reduce((x, y) => x + y, 0);
-      else { const a = nn(s.rd && s.rd[f.key]); v = a.length ? Math.max(0, a[a.length - 1] - a[0]) : 0; }
-      return { key: f.id, name: fieldLabel(f, p), color: colors[i], value: v, fmt: fmtF(f) };
+      if (arr.length) v = mode === "sum" ? arr.reduce((a, b) => a + b, 0) : mode === "avg" ? arr.reduce((a, b) => a + b, 0) / arr.length : arr[arr.length - 1] - arr[0];
+      return { key: f.id, name: fieldLabel(f, p), color: colors[i], value: Math.max(0, v), fmt: fmtF(f) };
     });
     if (!slices.some((x) => x.value > 0)) return empty(host, "No usage for these fields in this period.");
     const f0 = defs[0];
     C.pie(host, { slices, donut: p.type === "donut", height: HEIGHTS[p.height] || 260, title: p.name,
-      persist: ctx0.persist ? ctx0.persist + "-" + p.id : undefined,
+      persist: ctx.persist ? ctx.persist + "-" + p.id : undefined,
       totalText: (t) => nf(t, f0.dec) + (f0.unit ? " " + f0.unit : ""), totalLabel: defs.every((f) => f.src === "g") ? "average" : "total" });
   }
-  let ctx0 = {};
 
   function drawPanel(host, p, d, ctx) {
-    ctx0 = ctx;
-    if (isPie(p)) return drawPie(host, p, d);
+    if (ctx.pvals) ctx.pvals.innerHTML = p.values && !isPie(p) && p.type !== "stat" ? statTiles(p, d) : "";
+    if (p.type === "stat") return drawStat(host, p, d);
+    if (isPie(p)) return drawPie(host, p, d, ctx);
     const { defs, normalized } = panelMode(p);
     if (!defs.length) return empty(host, "Pick at least one field.");
     if (!d || !d.series || !d.summary.samples) return empty(host, "No data logged in this period.");
     const bar = p.type === "bar" || p.type === "stacked";
     const s = d.series, u = d.usage;
-    const needSeries = defs.some((f) => f.src !== "use");
+    const needSeries = defs.some((f) => !isUsageOnly(f));
     const x = needSeries ? s.t : u.t;
     const bucket = needSeries ? d.bucket || d.dt : u.bucket;
     const colors = colorsFor(defs);
     let waitRd = false;
     const series = [];
     defs.forEach((f, i) => {
-      let data;
-      if (f.src === "g") data = s[f.key];
-      else if (f.src === "rd") { data = s.rd ? s.rd[f.key] : null; if (!s.rd) waitRd = true; }
-      else { data = u[f.key]; if (data && needSeries) data = stepMap(u, data, x); }
-      if (!data || !present(data)) return;
+      const data = valuesFor(f, d, x, needSeries);
+      if (!data) { if (needsRd(f.id) && !s.rd) waitRd = true; return; }
+      if (!present(data)) return;
       series.push({ key: f.id, name: fieldLabel(f, p), color: colors[i], width: 1.8, fill: p.type === "area", negate: bar && f.id === "use:export",
-        data: normalized ? normalize(data) : data, raw: normalized ? data : null, fmt: fmtF(f), def: f, ci: i });
+        data: normalized ? normalize(data) : data, raw: normalized ? data : null, fmt: fmtF(f), def: f });
     });
     if (!series.length) return empty(host, waitRd ? "Loading meter readings…" : "No data for these fields in this period. Is the field being tracked (Logs → Global tracking)?");
     const common = {
@@ -336,17 +422,19 @@
       }
     }
     const autoNonZero = !normalized && defs.every((f) => f.unit === "V" || f.unit === "Hz" || f.src === "rd");
+    // a line may only break where points are really missing: allow at least 3.5 buckets between points
     C.line(host, { ...common, bucket: needSeries ? d.bucket : u.bucket, step: p.type === "step" || !needSeries,
       zeroLine: p.zero === "yes" ? true : p.zero === "no" ? false : !autoNonZero,
-      gap: needSeries ? Math.max(180, d.dt * 4) : u.bucket * 3.5, gaps: d.gaps,
+      gap: needSeries ? Math.max(180, d.dt * 4, (d.bucket || 0) * 3.5) : u.bucket * 3.5, gaps: d.gaps,
       marker: d.now > d.from && d.now < d.to ? d.now : null, bands });
   }
 
   const typeName = (p) => (p.band && p.type === "line" ? "line + variability band" : (TYPES.find((t) => t[0] === p.type) || ["", p.type])[1].toLowerCase());
   function panelSub(p, d) {
+    if (p.type === "stat") return "values · " + (AGGS[p.agg] || AGGS.last);
     if (isPie(p)) return typeName(p) + " · " + (p.fields.every((id) => id.startsWith("rd:") || id.startsWith("use:")) ? "totals for the period" : "averages for the period");
     const { defs, normalized } = panelMode(p);
-    const usage = defs.every((f) => f.src === "use");
+    const usage = defs.length && defs.every(isUsageOnly);
     return typeName(p) + (usage && d ? " · per " + fmtBucket(d.usage.bucket) : "") + (normalized ? " · each scaled 0–100 %" : "");
   }
 
@@ -362,7 +450,7 @@
         card.dataset.id = p.id;
         card.innerHTML = `<div class="card-head"><h2>${esc(p.name)} <small></small></h2><div class="ptools">` +
           `<button class="tool" data-pa="up" title="Move up"${i === 0 ? " disabled" : ""}>↑</button><button class="tool" data-pa="down" title="Move down"${i === PANELS.length - 1 ? " disabled" : ""}>↓</button>` +
-          `<button class="tool" data-pa="edit">Edit</button></div></div><div class="phost"></div>`;
+          `<button class="tool" data-pa="edit">Edit</button></div></div><div class="stats pvals"></div><div class="phost"></div>`;
         box.appendChild(card);
       });
     }
@@ -384,7 +472,7 @@
       const card = box.querySelector(`[data-id="${p.id}"]`);
       if (!card) return;
       card.querySelector("small").textContent = panelSub(p, d);
-      drawPanel(card.querySelector(".phost"), p, d, ctx);
+      drawPanel(card.querySelector(".phost"), p, d, { ...ctx, pvals: card.querySelector(".pvals") });
     });
   }
 
@@ -407,6 +495,7 @@
       return `<path d="${d}" style="fill:${col};stroke:var(--surface);stroke-width:1.5"/>`;
     };
     const slices = (r0) => [[0, 0.45, "var(--s1)"], [0.45, 0.75, "var(--s2)"], [0.75, 1, "var(--s3)"]].map((s) => arc(r0, 25, s[0] * 2 * Math.PI, s[1] * 2 * Math.PI, s[2])).join("");
+    const box = (x, n, c) => `<rect x="${x}" y="12" width="26" height="32" rx="4" style="fill:var(--surface);stroke:var(--axis)"/><rect x="${x + 4}" y="17" width="6" height="6" rx="1.5" style="fill:${c}"/><text x="${x + 13}" y="38" text-anchor="middle" style="font-size:12px;font-weight:700;fill:var(--text)">${n}</text>`;
     const body = {
       line: `<polyline points="${poly}" style="${L}"/>`,
       area: `<polygon points="6,50 ${poly} 90,50" style="${A}"/><polyline points="${poly}" style="${L}"/>`,
@@ -416,8 +505,9 @@
       stacked: [[8, 20, 12], [26, 28, 14], [44, 14, 26], [62, 32, 10], [78, 22, 20]].map((b) => `<rect x="${b[0]}" y="${50 - b[1]}" width="14" height="${b[1]}" style="fill:var(--s2)"/><rect x="${b[0]}" y="${50 - b[1] - b[2]}" width="14" height="${b[2]}" rx="2" style="fill:var(--s3)"/>`).join(""),
       pie: slices(0),
       donut: slices(14),
+      stat: box(5, "42", "var(--s1)") + box(35, "7.1", "var(--s4)") + box(65, "230", "var(--s2)"),
     }[type];
-    const axis = type === "pie" || type === "donut" ? "" : `<line x1="4" x2="92" y1="50" y2="50" style="stroke:var(--axis)"/>`;
+    const axis = ["pie", "donut", "stat"].includes(type) ? "" : `<line x1="4" x2="92" y1="50" y2="50" style="stroke:var(--axis)"/>`;
     return `<svg viewBox="0 0 96 56" aria-hidden="true">${axis}${body}</svg>`;
   }
 
@@ -427,80 +517,109 @@
     const d = ctx.d();
     if (!d || !d.series) return;
     let need = false;
-    if (w.fields.some((f) => f.startsWith("rd:")) && !d.series.rd) { forced.rd = true; need = true; }
+    if (w.fields.some(needsRd) && !d.series.rd) { forced.rd = true; need = true; }
     if (isBandPanel(w)) for (const id of w.fields) if (gaugeNeedsRange(id) && !(d.series.mn && d.series.mn[id]) && !forced.ranges.has(id)) { forced.ranges.add(id); need = true; }
     if (need) await ctx.reload();
   }
 
   function openEditor(panel, ctx) {
     const isNew = !panel;
-    const w = JSON.parse(JSON.stringify(panel || { id: "", name: "New panel", type: "line", fields: ["power_w"], scale: "auto", zero: "auto", width: "half", height: "medium", labels: {} }));
-    w.labels = w.labels || {}; w.zero = w.zero || "auto";
+    const w = JSON.parse(JSON.stringify(panel || { id: "", name: "New panel", type: "line", fields: ["power_w"], scale: "auto", zero: "auto", agg: "last", values: false, width: "half", height: "medium", labels: {} }));
+    w.labels = w.labels || {}; w.zero = w.zero || "auto"; w.agg = w.agg || "last";
     if (w.band && w.type === "line") w.type = "band";
     if (!dlg) { dlg = document.createElement("dialog"); dlg.className = "pdlg"; document.body.appendChild(dlg); }
     const hasData = (f) => {
       const d0 = ctx.d();
-      if (!d0 || !d0.series) return null;
+      if (!d0 || !d0.series || f.src === "calc") return null;
       if (f.src === "g") return present(d0.series[f.key]);
       if (f.src === "use") return present(d0.usage[f.key]);
       return d0.series.rd ? present(d0.series.rd[f.key]) : null;
     };
+    const allDefs = FGROUPS.flatMap((gr) => gr[1]);
+    const counters = FGROUPS[2][1].filter((f) => f.id !== "rd:tariff");
+    const opt = (list) => list.map((f) => `<option value="${f.id}">${esc(fieldLabel(f))}</option>`).join("");
     dlg.innerHTML =
       `<div class="pform"><div class="pcol">` +
       `<h2>${isNew ? "New panel" : "Edit panel"}</h2>` +
       `<label>Name<input id="pe-name" maxlength="60"></label>` +
       `<div><div class="fl-head">Chart type</div><div class="tgrid" id="pe-types"></div></div>` +
       `<div id="pe-fields"></div><div id="pe-names"></div>` +
+      `<div class="row" id="pe-valrow"><label>Value shown<select id="pe-agg">${Object.entries(AGGS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select></label>` +
+      `<label class="chk" id="pe-valwrap"><input type="checkbox" id="pe-values"> Show the values above the chart</label></div>` +
       `<div class="row" id="pe-axis"><label>Value axis<select id="pe-zero"><option value="auto">Automatic</option><option value="yes">Starts at zero</option><option value="no">Fits the data (not from zero)</option></select></label>` +
       `<label>Different units<select id="pe-scale"><option value="auto">Scale to 0–100 % when needed</option><option value="normalized">Always scale to 0–100 %</option></select></label></div>` +
       `<div class="row"><label>Width<select id="pe-width"><option value="half">Half</option><option value="full">Full</option></select></label>` +
       `<label>Height<select id="pe-height"><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option></select></label></div>` +
-      `</div><div class="pprev"><div class="card-head"><b>Preview</b><small>uses the data on screen</small></div><div id="pe-prev"></div><div id="pe-msg" class="muted fine"></div></div></div>` +
+      `</div><div class="pprev"><div class="card-head"><b>Preview</b><small>uses the data on screen</small></div><div class="stats pvals" id="pe-pvals"></div><div id="pe-prev"></div><div id="pe-msg" class="muted fine"></div></div></div>` +
       `<div class="pfoot">${isNew ? "" : '<button id="pe-del" class="danger">Delete panel</button>'}<span class="grow"></span><button id="pe-cancel">Cancel</button><button id="pe-save" class="primary">Save panel</button></div>`;
     const $e = (id) => dlg.querySelector("#" + id);
-    $e("pe-name").value = w.name; $e("pe-scale").value = w.scale; $e("pe-zero").value = w.zero; $e("pe-width").value = w.width; $e("pe-height").value = w.height;
+    $e("pe-name").value = w.name; $e("pe-scale").value = w.scale; $e("pe-zero").value = w.zero; $e("pe-agg").value = w.agg;
+    $e("pe-values").checked = !!w.values; $e("pe-width").value = w.width; $e("pe-height").value = w.height;
 
+    const refresh = async () => { $e("pe-msg").textContent = "Loading…"; await ensureData(ctx, w); drawFields(); drawNames(); preview(); };
     const drawTypes = () => {
       $e("pe-types").innerHTML = TYPES.map((t) => `<button type="button" class="tbtn${w.type === t[0] ? " on" : ""}" data-t="${t[0]}" title="${t[1]}">${thumb(t[0])}<span>${t[1]}</span></button>`).join("");
       $e("pe-types").querySelectorAll("button").forEach((b) => (b.onclick = async () => { w.type = b.dataset.t; w.band = w.type === "band"; drawTypes(); await ensureData(ctx, w); preview(); }));
     };
     const drawNames = () => {
-      const defs = w.fields.map((id) => FDEFS[id]).filter(Boolean);
+      const defs = w.fields.map(defOf).filter(Boolean);
       $e("pe-names").innerHTML = defs.length ? `<div class="fl-head">Names in this chart <span class="muted fine">(leave empty to use the default; change defaults under Device → Names)</span></div>` +
-        defs.map((f) => `<label class="nrow"><span>${esc(f.id.replace(/^(use|rd):/, ""))}</span><input data-n="${f.id}" maxlength="40" placeholder="${esc(LABELS[f.id] || (f.tn ? f.base + ", " + tName(f.tn, true) : f.base))}" value="${esc(w.labels[f.id] || "")}"></label>`).join("") : "";
+        defs.map((f) => `<label class="nrow"><span>${esc(f.id.replace(/^(use|rd|calc):/, ""))}</span><input data-n="${f.id}" maxlength="40" placeholder="${esc(fieldLabel(f))}" value="${esc(w.labels[f.id] || "")}"></label>`).join("") : "";
       $e("pe-names").querySelectorAll("input[data-n]").forEach((i) => (i.oninput = () => { if (i.value.trim()) w.labels[i.dataset.n] = i.value; else delete w.labels[i.dataset.n]; preview(); }));
     };
     const drawFields = () => {
-      const cols = colorsFor(w.fields.map((id) => FDEFS[id]).filter(Boolean));
+      const cols = colorsFor(w.fields.map(defOf).filter(Boolean));
       const colOf = (id) => cols[w.fields.indexOf(id)];
-      $e("pe-fields").innerHTML = `<div class="fl-head">Fields <span class="muted fine">(up to 8, shown on top of each other)</span></div>` + FGROUPS.map((gr) =>
-        `<div class="fgroup">${esc(gr[0])}</div><div class="fgrid">` + gr[1].map((f) => {
-          const on = w.fields.includes(f.id), nd = hasData(f) === false;
-          return `<label class="${nd ? "nodata" : ""}"><input type="checkbox" data-f="${f.id}"${on ? " checked" : ""}${!on && w.fields.length >= 8 ? " disabled" : ""}>` +
-            `<i class="fsw" style="background:${on ? colOf(f.id) : "var(--axis)"}"></i>${esc(fieldLabel(f, w))}${nd ? '<span class="val">no data here</span>' : ""}</label>`;
-        }).join("") + `</div>`).join("");
+      const box = (f) => {
+        const on = w.fields.includes(f.id), nd = hasData(f) === false;
+        return `<label class="${nd ? "nodata" : ""}"><input type="checkbox" data-f="${f.id}"${on ? " checked" : ""}${!on && w.fields.length >= 8 ? " disabled" : ""}>` +
+          `<i class="fsw" style="background:${on ? colOf(f.id) : "var(--axis)"}"></i>${esc(fieldLabel(f))}${nd ? '<span class="val">no data here</span>' : ""}</label>`;
+      };
+      const calcIds = [...new Set([...CALC_PRESETS, ...w.fields.filter((x) => x.startsWith("calc:"))])];
+      $e("pe-fields").innerHTML = `<div class="fl-head">Fields <span class="muted fine">(up to 8, shown on top of each other)</span></div>` +
+        FGROUPS.map((gr) => `<div class="fgroup">${esc(gr[0])}</div><div class="fgrid">${gr[1].map(box).join("")}</div>`).join("") +
+        `<div class="fgroup">Calculated (from the meter readings)</div><div class="fgrid">${calcIds.map(defOf).filter(Boolean).map(box).join("")}</div>` +
+        `<div class="calcbuild"><div class="fl-head">Make your own calculation</div>` +
+        `<div class="row"><select id="cb-kind"><option value="delta">Change between points</option><option value="rate">Rate per hour</option></select><span>of</span><select id="cb-src">${opt(counters)}</select><button type="button" id="cb-add1">Add</button></div>` +
+        `<div class="row"><span>Difference:</span><select id="cb-a">${opt(allDefs)}</select><span>−</span><select id="cb-b">${opt(allDefs)}</select><button type="button" id="cb-add2">Add</button></div>` +
+        `<div class="muted fine" id="cb-msg">“Change between points” shows how much a counter grew from one point to the next (gas used). “Rate per hour” divides that by the time (gas flow, power in kW). Both depend on the Detail setting above the charts.</div></div>`;
       dlg.querySelectorAll("input[data-f]").forEach((c) => (c.onchange = async () => {
         const id = c.dataset.f;
         if (c.checked) w.fields.push(id); else { w.fields = w.fields.filter((x) => x !== id); delete w.labels[id]; }
-        $e("pe-msg").textContent = "Loading…";
-        await ensureData(ctx, w);
-        drawFields(); drawNames(); preview();
+        await refresh();
       }));
+      const addCalc = async (id) => {
+        if (w.fields.includes(id)) return ($e("cb-msg").textContent = "Already in this chart.");
+        if (w.fields.length >= 8) return ($e("cb-msg").textContent = "At most 8 fields per chart.");
+        w.fields.push(id);
+        await refresh();
+      };
+      $e("cb-add1").onclick = () => addCalc(`calc:${$e("cb-kind").value}:${$e("cb-src").value.slice(3)}`);
+      $e("cb-add2").onclick = () => {
+        const a = $e("cb-a").value, b = $e("cb-b").value;
+        if (a === b) return ($e("cb-msg").textContent = "Pick two different fields.");
+        if (FDEFS[a].unit !== FDEFS[b].unit) return ($e("cb-msg").textContent = "A difference needs two fields with the same unit.");
+        addCalc(`calc:diff:${a}|${b}`);
+      };
     };
     const preview = () => {
-      w.name = $e("pe-name").value; w.scale = $e("pe-scale").value; w.zero = $e("pe-zero").value;
-      w.width = $e("pe-width").value; w.height = $e("pe-height").value;
-      const pie = isPie(w), { normalized, same } = panelMode(w), bars = w.type === "bar" || w.type === "stacked";
-      $e("pe-axis").style.display = pie ? "none" : "";
+      w.name = $e("pe-name").value; w.scale = $e("pe-scale").value; w.zero = $e("pe-zero").value; w.agg = $e("pe-agg").value;
+      w.values = $e("pe-values").checked; w.width = $e("pe-width").value; w.height = $e("pe-height").value;
+      const pie = isPie(w), stat = w.type === "stat", { normalized, same } = panelMode(w), bars = w.type === "bar" || w.type === "stacked";
+      $e("pe-axis").style.display = pie || stat ? "none" : "";
+      $e("pe-valwrap").style.display = pie || stat ? "none" : "";
+      $e("pe-valrow").style.display = pie ? "none" : "";
+      $e("pe-agg").parentElement.style.display = stat || w.values ? "" : "none";
       $e("pe-msg").textContent = !w.fields.length ? "Tick at least one field."
-        : pie ? (new Set(w.fields.map((id) => FDEFS[id] && FDEFS[id].unit)).size > 1 ? "Pie and donut charts need fields with the same unit." : "Each field becomes a slice: averages for measurements, the amount used for usage and meter readings.")
+        : stat ? "Each field becomes a tile. “Value shown” picks the last value, average, lowest, highest or total over the period on screen."
+        : pie ? (new Set(w.fields.map((id) => defOf(id) && defOf(id).unit)).size > 1 ? "Pie and donut charts need fields with the same unit." : "Each field becomes a slice: averages for measurements, the amount used for usage and meter readings.")
         : normalized && !same ? "These fields have different units, so each one is scaled to 0–100 % to compare shapes. Hover to see the real values."
-        : bars && w.fields.some((id) => FDEFS[id] && FDEFS[id].src !== "use") ? "Bars show one bar per time bucket; they work best with “usage per period” fields."
-        : w.type === "band" && !w.fields.some((id) => FDEFS[id] && FDEFS[id].src === "g") ? "The band shows lowest…highest per bucket for measurements; pick a measurement."
+        : bars && w.fields.some((id) => defOf(id) && !isUsageOnly(defOf(id))) ? "Bars show one bar per time bucket; they work best with “usage per period” fields."
+        : w.type === "band" && !w.fields.some((id) => defOf(id) && defOf(id).src === "g") ? "The band shows lowest…highest per bucket for measurements; pick a measurement."
         : "";
-      drawPanel($e("pe-prev"), w, ctx.d(), { persist: null });
+      drawPanel($e("pe-prev"), w, ctx.d(), { persist: null, pvals: $e("pe-pvals") });
     };
-    dlg.querySelectorAll("#pe-name, #pe-scale, #pe-zero, #pe-width, #pe-height").forEach((el) => (el.oninput = el.onchange = preview));
+    dlg.querySelectorAll("#pe-name, #pe-scale, #pe-zero, #pe-agg, #pe-values, #pe-width, #pe-height").forEach((el) => (el.oninput = el.onchange = preview));
     $e("pe-cancel").onclick = () => dlg.close();
     $e("pe-save").onclick = async () => {
       if (!w.fields.length) return ($e("pe-msg").textContent = "Tick at least one field.");
@@ -751,6 +870,7 @@
 
   function histZoom(a, b) {
     a = Math.floor(a); b = Math.ceil(b);
+    if (b - a > 86400 * 400) return toast("That is more than the 400 days that can be shown at once.", true);
     if (b - a < 6) b = a + 6;
     H.stack.push(hKey());
     H.range = "window"; H.t0 = a; H.t1 = b;
@@ -761,7 +881,8 @@
     const d = H.data;
     document.querySelectorAll("#range-seg button").forEach((b) => b.classList.toggle("on", b.dataset.r === H.range));
     document.querySelectorAll("#res-seg button").forEach((b) => b.classList.toggle("on", b.dataset.res === H.res));
-    $("hist-label").textContent = H.range === "window" ? `${C.fmtDate(d.from)} ${C.fmtHMS(d.from)} – ${C.fmtHMS(d.to)}` : d.label;
+    const sameDay = ymd(new Date(d.from * 1000)) === ymd(new Date(d.to * 1000));
+    $("hist-label").textContent = H.range === "window" ? `${C.fmtDate(d.from)} ${C.fmtHMS(d.from)} – ${sameDay ? "" : C.fmtDate(d.to) + " "}${C.fmtHMS(d.to)}` : d.label;
     $("zoom-bar").hidden = !H.stack.length;
     const dayMode = !!d.date;
     $("day-pick").value = dayMode ? d.date : "";
@@ -1001,6 +1122,7 @@
   const lKey = () => ({ t0: L.t0, t1: L.t1 });
   function logZoom(a, b) {
     a = Math.floor(a); b = Math.ceil(b);
+    if (b - a > 86400 * 400) return;
     if (b - a < 3) b = a + 3;
     L.stack.push(lKey()); L.t0 = a; L.t1 = b;
     detailAt = 0; loadDetail();
@@ -1011,7 +1133,7 @@
     el.innerHTML =
       `<div class="card"><div class="card-head"><h2 id="ld-title"></h2><button id="ld-close" class="tool">Close</button></div>` +
       `<div class="stats" id="ld-stats"></div>` +
-      `<div class="row"><span class="muted fine">Detail</span><div class="seg" id="ld-res">` +
+      `<div class="row"><span class="muted fine">Detail</span><div class="seg scroll" id="ld-res">` +
       `<button data-res="auto">Auto</button><button data-res="raw">Raw</button><button data-res="60">1 min</button><button data-res="300">5 min</button><button data-res="900">15 min</button><button data-res="3600">1 h</button></div>` +
       `<span id="ld-note" class="muted fine"></span>` +
       `<span id="ld-zoom" hidden style="margin-left:auto"><span class="pill"><i></i><span>Zoomed in</span></span> <button id="ld-back" class="tool">Back</button> <button id="ld-whole" class="tool">Show whole log</button></span></div></div>` +
