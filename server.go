@@ -30,6 +30,7 @@ type Server struct {
 	logs   *Logs
 	hub    *Hub
 	panels *PanelStore
+	base   *BaselineStore
 	auth   string // "user:pass" or ""
 }
 
@@ -721,6 +722,23 @@ func (s *Server) Handler() http.Handler {
 			return err
 		}
 		writeJSON(w, 200, map[string]any{"ok": true, "panels": p, "custom": false})
+		return nil
+	}))
+	mux.HandleFunc("GET /api/baseline", handle(func(w http.ResponseWriter, r *http.Request) error {
+		writeJSON(w, 200, map[string]any{"ok": true, "baseline": s.base.Get()})
+		return nil
+	}))
+	mux.HandleFunc("PUT /api/baseline", handle(func(w http.ResponseWriter, r *http.Request) error {
+		var in Baseline
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<17)
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			return &HTTPError{400, "Invalid JSON body."}
+		}
+		b, err := s.base.Set(in)
+		if err != nil {
+			return err
+		}
+		writeJSON(w, 200, map[string]any{"ok": true, "baseline": b})
 		return nil
 	}))
 	mux.HandleFunc("GET /api/last", handle(s.last))

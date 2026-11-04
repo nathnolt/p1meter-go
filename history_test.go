@@ -216,3 +216,13 @@ func TestCalculatedFieldsAllowed(t *testing.T) {
 		}
 	}
 }
+
+func TestCleanBaseline(t *testing.T) {
+	b, err := cleanBaseline(Baseline{Enabled: true, Items: []BaselineItem{{ID: "x", Name: " Router ", Watts: 7.25, Enabled: true}, {ID: "x", Name: "Fridge", Watts: 40}}})
+	if err != nil || b.Items[0].Name != "Router" || b.Items[0].ID == b.Items[1].ID {
+		t.Fatalf("%+v %v", b, err)
+	}
+	if _, err := cleanBaseline(Baseline{Items: []BaselineItem{{Watts: -1}}}); err == nil {
+		t.Fatal("negative watts accepted")
+	}
+}

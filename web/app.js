@@ -138,12 +138,34 @@
     `<div class="stat"><div class="label">${swatch ? `<span class="sw" style="background:${swatch}"></span>` : ""}${label}</div>` +
     `<div class="v">${value}${unit ? `<small>${unit}</small>` : ""}</div><div class="s">${sub || ""}</div></div>`;
 
-  function summaryTiles(sm, prev, prevLabel) {
+  // the summary tiles with the always-on load deducted (same rules as the panels)
+  function adjustSummary(d) {
+    const W = baseW(), sm0 = d.summary;
+    if (!W || !sm0 || !d.usage) return { sm: sm0, prev: d.prev, W: 0 };
+    // the load runs the whole period (also where nothing was logged): W × hours is taken off the import
+    const kwhCut = (W * Math.max(0, Math.min(d.to, d.now || d.to) - d.from)) / 3.6e6;
+    const t1 = sm0.import_t1_kwh, t2 = sm0.import_t2_kwh, share1 = t1 != null && t2 != null && t1 + t2 > 0 ? t1 / (t1 + t2) : 0.5;
+    const cuts = { import_kwh: kwhCut, import_t1_kwh: kwhCut * share1, import_t2_kwh: kwhCut * (1 - share1) };
+    const sm = { ...sm0 };
+    for (const k in cuts) if (sm[k] != null) sm[k] -= cuts[k];
+    const dp = (v) => (v != null ? v - W : v);
+    sm.peak_w = dp(sm0.peak_w); sm.base_w = dp(sm0.base_w);
+    const pw = d.series && d.series.power ? valuesFor(defOf("power_w"), d, d.series.t, true) : null;
+    const ok = (pw || []).filter((v) => v != null);
+    if (ok.length) sm.avg_w = ok.reduce((a, b) => a + b, 0) / ok.length;
+    let prev = d.prev;
+    if (prev) { // the period before has the same length, so it gets the same kWh deducted
+      prev = { ...prev };
+      for (const k in cuts) if (prev[k] != null) prev[k] -= cuts[k];
+    }
+    return { sm, prev, W };
+  }
+  function summaryTiles(sm, prev, prevLabel, W) {
     const out = [];
     if (sm.import_kwh != null) {
       const split = sm.import_t1_kwh != null && sm.import_t2_kwh != null && sm.import_t1_kwh + sm.import_t2_kwh > 0
         ? `${tName(1)} ${nf(sm.import_t1_kwh, 2)} · ${tName(2)} ${nf(sm.import_t2_kwh, 2)}` : "";
-      out.push(tile("Electricity import", kwh(sm.import_kwh), "kWh", (prev ? delta(sm.import_kwh, prev.import_kwh, prevLabel) + "<br>" : "") + split, "var(--s2)"));
+      out.push(tile("Electricity import", kwh(sm.import_kwh), "kWh", (prev ? delta(sm.import_kwh, prev.import_kwh, prevLabel) + "<br>" : "") + split + (W ? (split ? "<br>" : "") + "−" + nf(W, 0) + " W always-on deducted" : ""), "var(--s2)"));
     }
     if (sm.export_kwh != null && (sm.export_kwh > 0.0005 || (prev && prev.export_kwh > 0.005)))
       out.push(tile("Fed back to grid", kwh(sm.export_kwh), "kWh", prev ? delta(sm.export_kwh, prev.export_kwh, prevLabel) : "", "var(--s3)"));
@@ -269,7 +291,17 @@
   const rangeList = () => [...new Set([...forced.ranges, ...PANELS.filter(isBandPanel).flatMap((p) => p.fields.filter(gaugeNeedsRange))])];
   const needReadings = () => forced.rd || PANELS.some((p) => p.fields.some(needsRd));
   const extraQuery = () => (needReadings() ? "&readings=1" : "") + (rangeList().length ? "&ranges=" + rangeList().join(",") : "");
-  const panelsReady = (async () => { const r = await api("GET", "/api/panels"); if (r.panels) PANELS = r.panels; })();
+  // always-on devices: their summed wattage is deducted from the power charts (see valuesFor)
+  let BASE = { enabled: false, items: [] };
+  const baseW = () => (BASE.enabled ? BASE.items.reduce((a, i) => a + (i.enabled ? Math.max(0, +i.watts || 0) : 0), 0) : 0);
+  // per phase: devices set to "any phase" come off every phase in full, devices on L1/L2/L3 only off that one
+  const phaseW = (n) => (BASE.enabled ? BASE.items.reduce((a, i) => a + (i.enabled && (!i.phase || i.phase === String(n)) ? Math.max(0, +i.watts || 0) : 0), 0) : 0);
+  const baseAffects = (id) => id === "power_w" || /^power_l[123]_w$/.test(id) || id === "use:import" || id === "use:import_t1" || id === "use:import_t2" || id === "calc:rate:energy_import_kwh" || id === "calc:delta:energy_import_kwh";
+  const panelsReady = (async () => {
+    const [r, b] = await Promise.all([api("GET", "/api/panels"), api("GET", "/api/baseline")]);
+    if (r.panels) PANELS = r.panels;
+    if (b.baseline) BASE = b.baseline;
+  })();
 
   // a field keeps its own colour; clashes inside one panel move to the next free palette slot
   function colorsFor(defs) {
@@ -299,13 +331,40 @@
     return out;
   }
   // the numbers of a field, aligned with x (the series time axis, or the usage buckets when needSeries is false)
+  // deduct a constant load of W watts: plain subtraction (no clamping), so the numbers always add up
+  const dedPower = (a, W) => (a && W ? a.map((v) => (v == null ? null : v - W)) : a);
+  function dedUsage(d, key, W) {
+    const u = d.usage, a = u[key];
+    if (!a) return a;
+    return a.map((v, j) => {
+      if (v == null) return null;
+      const frac = d.now > u.t[j] && d.now < u.t[j] + u.bucket ? (d.now - u.t[j]) / u.bucket : 1; // the running bucket is only partly over
+      let k = (W * u.bucket * frac) / 3.6e6;
+      if (key !== "import") { const t = u.import && u.import[j]; k *= t > 0 ? v / t : 0.5; } // tariffs share the deduction by their part of the import
+      return v - k;
+    });
+  }
   function valuesFor(f, d, x, needSeries) {
+    const W = baseW();
+    if (!W || !baseAffects(f.id)) return rawValues(f, d, x, needSeries);
+    const s = d.series, u = d.usage;
+    if (f.src === "g") { const m = f.id.match(/^power_l([123])_w$/); return dedPower(s[f.key], m ? phaseW(+m[1]) : W); }
+    if (f.src === "use") { const a = dedUsage(d, f.key, W); return a && needSeries ? stepMap(u, a, x) : a; }
+    const r = s.rd ? s.rd[f.from.key] : null; // calc: change / rate of the import meter
+    if (!r) return null;
+    return r.map((v, i) => {
+      if (i === 0 || v == null || r[i - 1] == null) return null;
+      const dt = s.t[i] - s.t[i - 1], dv = Math.max(0, v - r[i - 1]);
+      return f.kind === "rate" ? dv / (dt / 3600) - W / 1000 : dv - (W / 1000) * (dt / 3600);
+    });
+  }
+  function rawValues(f, d, x, needSeries) {
     const s = d.series, u = d.usage;
     if (f.src === "g") return s[f.key];
     if (f.src === "rd") return s.rd ? s.rd[f.key] : null;
     if (f.src === "use") { const a = u[f.key]; return a && needSeries ? stepMap(u, a, x) : a; }
     if (f.kind === "diff") {
-      const a = valuesFor(f.a, d, x, needSeries), b = valuesFor(f.b, d, x, needSeries);
+      const a = rawValues(f.a, d, x, needSeries), b = rawValues(f.b, d, x, needSeries);
       return a && b ? a.map((v, i) => (v == null || b[i] == null ? null : v - b[i])) : null;
     }
     // delta / rate: change of a meter reading between consecutive points (never negative)
@@ -418,6 +477,7 @@
         if (sr.def.src !== "g") continue;
         let lo = s.mn && s.mn[sr.def.id], hi = s.mx && s.mx[sr.def.id];
         if (!lo && sr.def.id === "power_w") { lo = s.pmin; hi = s.pmax; }
+        if (lo && present(lo) && sr.def.id === "power_w" && baseW()) { lo = dedPower(lo, baseW()); hi = dedPower(hi, baseW()); }
         if (lo && present(lo)) bands.push({ lo, hi, color: sr.color, name: sr.name + " range", fmt: sr.fmt });
       }
     }
@@ -431,6 +491,10 @@
 
   const typeName = (p) => (p.band && p.type === "line" ? "line + variability band" : (TYPES.find((t) => t[0] === p.type) || ["", p.type])[1].toLowerCase());
   function panelSub(p, d) {
+    const t = panelSub0(p, d);
+    return baseW() && p.fields.some(baseAffects) ? t + " · −" + nf(baseW(), 0) + " W always-on deducted" : t;
+  }
+  function panelSub0(p, d) {
     if (p.type === "stat") return "values · " + (AGGS[p.agg] || AGGS.last);
     if (isPie(p)) return typeName(p) + " · " + (p.fields.every((id) => id.startsWith("rd:") || id.startsWith("use:")) ? "totals for the period" : "averages for the period");
     const { defs, normalized } = panelMode(p);
@@ -473,6 +537,81 @@
       if (!card) return;
       card.querySelector("small").textContent = panelSub(p, d);
       drawPanel(card.querySelector(".phost"), p, d, { ...ctx, pvals: card.querySelector(".pvals") });
+    });
+  }
+
+
+  // ---- always-on devices card (History): the list is saved on the server, the deduction is applied in valuesFor
+  const baseBox = () => $("baseline");
+  let baseTimer = 0;
+  function renderHistStats(d) {
+    const adj = adjustSummary(d);
+    $("hist-stats").innerHTML = summaryTiles(adj.sm, adj.prev, H.prevLabel, adj.W);
+  }
+  function baseRedraw() {
+    const d = histCtx.d();
+    if (d) { renderPanels($("panels"), d, histCtx); renderHistStats(d); }
+    const b = baseBox();
+    if (!b) return;
+    const w = baseW(), n = BASE.items.filter((i) => i.enabled).length;
+    b.querySelector(".b-sum").textContent = BASE.items.length ? (BASE.enabled ? "−" + nf(w, 0) + " W deducted (" + n + " device" + (n === 1 ? "" : "s") + ")" : "switched off") : "no devices yet";
+    b.classList.toggle("off", !BASE.enabled);
+  }
+  function baseSave() {
+    clearTimeout(baseTimer);
+    baseTimer = setTimeout(async () => {
+      const r = await api("PUT", "/api/baseline", BASE);
+      if (!r.ok) toast(r.error || "Could not save the always-on devices", true);
+    }, 400);
+  }
+  function renderBaseline() {
+    const b = baseBox();
+    if (!b) return;
+    const folded = store.get("p1h:base-fold", "0") === "1";
+    b.classList.toggle("folded", folded);
+    b.querySelector(".b-fold").textContent = folded ? "▸" : "▾";
+    b.querySelector(".b-fold").setAttribute("aria-expanded", String(!folded));
+    b.querySelector(".b-on").checked = BASE.enabled;
+    const rows = b.querySelector(".b-rows");
+    rows.innerHTML = BASE.items.map((it) =>
+      `<div class="b-row" data-id="${esc(it.id)}"><input class="b-name" placeholder="Device name" maxlength="60" value="${esc(it.name)}" aria-label="Device name">` +
+      `<span class="b-wrap"><input class="b-w" type="number" min="0" max="100000" step="any" inputmode="decimal" value="${it.watts}" aria-label="Wattage"><span>W</span></span>` +
+      `<select class="b-ph" aria-label="Phase" title="Which phase this device is on"><option value=""${it.phase ? "" : " selected"}>any phase</option>${[1, 2, 3].map((n) => `<option value="${n}"${it.phase === String(n) ? " selected" : ""}>L${n}</option>`).join("")}</select><label class="b-en"><input type="checkbox"${it.enabled ? " checked" : ""}> on</label><button class="tool danger" data-b="del">Delete</button></div>`).join("") ||
+      '<div class="muted fine">No devices yet. Add the things that are always running (router, fridge, standby…) with their wattage.</div>';
+    baseRedraw();
+  }
+  function initBaseline() {
+    const b = baseBox();
+    if (!b || b.__init) return;
+    b.__init = true;
+    b.querySelector(".b-fold").onclick = () => { store.set("p1h:base-fold", b.classList.contains("folded") ? "0" : "1"); renderBaseline(); };
+    b.querySelector(".b-on").onchange = (e) => { BASE.enabled = e.target.checked; baseRedraw(); baseSave(); };
+    b.querySelector(".b-add").onclick = () => {
+      BASE.items.push({ id: Math.random().toString(36).slice(2, 8), name: "", watts: 0, enabled: true, phase: "" });
+      store.set("p1h:base-fold", "0");
+      renderBaseline(); baseSave();
+      const rows = b.querySelectorAll(".b-name");
+      rows[rows.length - 1].focus();
+    };
+    const item = (el) => BASE.items.find((i) => i.id === el.closest(".b-row").dataset.id);
+    b.addEventListener("input", (e) => {
+      const it = e.target.closest(".b-row") && item(e.target);
+      if (!it) return;
+      if (e.target.classList.contains("b-name")) it.name = e.target.value;
+      else if (e.target.classList.contains("b-w")) it.watts = Math.max(0, parseFloat(e.target.value) || 0);
+      else return;
+      baseRedraw(); baseSave();
+    });
+    b.addEventListener("change", (e) => {
+      const it = e.target.closest(".b-row") && item(e.target);
+      if (it && e.target.classList.contains("b-ph")) { it.phase = e.target.value; baseRedraw(); baseSave(); return; }
+      if (it && e.target.type === "checkbox") { it.enabled = e.target.checked; baseRedraw(); baseSave(); }
+    });
+    b.addEventListener("click", (e) => {
+      const btn = e.target.closest('button[data-b="del"]');
+      if (!btn) return;
+      BASE.items = BASE.items.filter((i) => i.id !== btn.closest(".b-row").dataset.id);
+      renderBaseline(); baseSave();
     });
   }
 
@@ -825,8 +964,9 @@
   async function loadToday() {
     const d = await api("GET", "/api/history?range=today&lite=1&compare=1");
     if (!d.usage) return;
-    $("today-stats").innerHTML = summaryTiles(d.summary, d.prev, "yesterday so far");
-    const u = d.usage, dom = [d.from, d.to];
+    const adj = adjustSummary(d);
+    $("today-stats").innerHTML = summaryTiles(adj.sm, adj.prev, "yesterday so far", adj.W);
+    const W = baseW(), u = W ? { ...d.usage, import: dedUsage(d, "import", W) } : d.usage, dom = [d.from, d.to];
     elecBars($("chart-today-el"), u, 210, dom);
     gasBars($("chart-today-gas"), u, 210, dom);
   }
@@ -839,7 +979,7 @@
   const histCtx = { persist: "h", onZoom: (a, b) => histZoom(a, b), d: () => H.data, reload: () => loadHistory(true) };
 
   function enterHistory() {
-    Promise.all([refreshInfo(), panelsReady]).then(() => loadHistory());
+    Promise.all([refreshInfo(), panelsReady]).then(() => { initBaseline(); renderBaseline(); loadHistory(); });
     every(5000, () => {
       const d = H.data;
       if (!d || document.hidden) return;
@@ -890,7 +1030,8 @@
     $("day-next").disabled = !dayMode || d.date >= ymd(new Date(d.now * 1000));
     $("day-pick").max = ymd(new Date(d.now * 1000));
     const prevLabel = dayMode ? (d.range === "today" ? "yesterday so far" : "day before") : H.range === "24h" ? "previous 24 h" : "previous period";
-    $("hist-stats").innerHTML = summaryTiles(d.summary, d.prev, prevLabel);
+    H.prevLabel = prevLabel;
+    renderHistStats(d);
     $("res-note").textContent = resNote(d);
     renderPanels($("panels"), d, histCtx);
     $("hist-foot").textContent = covNote(d);

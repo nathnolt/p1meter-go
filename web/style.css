@@ -329,3 +329,18 @@ svg .pie-total { fill: var(--text); font-size: 1.15rem; font-weight: 680; }
 .calcbuild .row { flex-wrap: wrap; gap: .4rem; }
 .calcbuild select { flex: 1 1 8rem; min-width: 0; max-width: 100%; }
 .calcbuild .row span { color: var(--text-3); font-size: .85rem; }
+
+/* always-on devices */
+.base { margin-bottom: 1rem; }
+.base .card-head { gap: .6rem; flex-wrap: wrap; align-items: center; }
+.base .card-head h2 { flex: 1 1 12rem; margin: 0; }
+.b-master { display: flex; gap: .4rem; align-items: center; font-weight: 600; }
+.base.folded .b-body { display: none; }
+.base.folded .card-head { margin-bottom: 0; }
+.base.off .b-rows { opacity: .55; }
+.b-rows { display: grid; gap: .45rem; margin: .5rem 0 .7rem; }
+.b-row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.b-row .b-name { flex: 1 1 11rem; min-width: 0; }
+.b-wrap { display: inline-flex; align-items: center; gap: .3rem; }
+.b-row .b-w { width: 6.5rem; }
+.b-en { display: inline-flex; gap: .3rem; align-items: center; }

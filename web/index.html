@@ -130,6 +130,18 @@
   </div>
   <div class="stats" id="hist-stats"></div>
   <div class="panel-bar"><b>Panels</b><span class="muted fine">drag on a chart to zoom in · click legend entries to show or hide · Edit changes what a panel shows</span><span class="grow"></span><button id="panel-add" class="primary">+ Add panel</button><button id="panel-reset" class="tool">Reset to defaults</button></div>
+  <div class="card base" id="baseline">
+    <div class="card-head">
+      <button class="tool b-fold" aria-expanded="true" title="Collapse or expand">▾</button>
+      <h2>Always-on devices <small class="b-sum"></small></h2>
+      <label class="b-master"><input type="checkbox" class="b-on"> Deduct from the power charts</label>
+    </div>
+    <div class="b-body">
+      <p class="muted fine">Things that run all the time. Their total wattage is subtracted from the power and electricity-used panels (power, imported kWh, power/usage from the import meter), so what is left shows the other devices. Per-phase power is reduced too: “any phase” devices come off every phase in full, a device set to L1, L2 or L3 only off that phase. The tiles at the top (electricity import, cost, peak and average power) are deducted as well. Exported energy and meter readings are not changed.</p>
+      <div class="b-rows"></div>
+      <button class="b-add tool">+ Add device</button>
+    </div>
+  </div>
   <div id="panels" class="panels"></div>
   <p class="muted fine" id="hist-foot"></p>
 </section>

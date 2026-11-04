@@ -98,6 +98,7 @@ History and each log's *View* page are made of **panels**. A panel is a chart yo
 - **Zoom:** drag across any chart (on a phone: swipe sideways across it, or use the ‹ − + › buttons above each chart; tap a chart to see its values); the app asks the server again, so zooming shows finer detail, down to every logged sample. *Back* and *Show whole period* undo it.
 - **Detail** (Auto / Raw / 1 min / 5 min / 15 min / 1 h / 1 day) sets the line averages and the size of the usage buckets. You cannot get finer detail than the interval the data was logged at.
 - Click legend entries to show or hide a series (remembered in the browser). *Table* shows the numbers. A panel only shows fields that are in your CSV files, so untracked fields appear as "no data".
+- **Always-on devices** (card above the panels on History): a list of *name, wattage, phase, on/off, Delete* with *+ Add device*, a master checkbox "Deduct from the power charts" and a ▾ button that collapses the card. The wattages of all devices that are on are added up (total W) and **simply subtracted**: power (total, and each phase: "any phase" devices come off every phase in full, a device on L1/L2/L3 only off that phase) is *raw value − W* with no clamping, so values can go negative. Electricity imported loses *W × hours*, so 41.7 W over 24 h removes 1.0 kWh from that day's import. The tiles at the top of History and Live (import, cost, peak, average, lowest typical draw) use the same numbers; import is reduced for the whole period, also where nothing was logged, and its tariff split is shared by each tariff's part of the import. Charts show the deduction per bucket where there is data. Not changed: exported energy and meter readings. Affected panels say "−N W always-on deducted". The list is saved on the server (`data/baseline.json`).
 
 Every folder under `-data` is created automatically when it is needed (also if you delete it while the app runs), so `dist/data/` can be empty or missing.
 
@@ -124,6 +125,7 @@ data/logs/master/YYYY-MM-DD.csv       global tracking, one file per day (only on
 data/logs/master/.rollup/             cache of finished days (safe to delete)
 data/logs/user/<name>-<timestamp>.csv your own logs and live sessions; index.json lists them
 data/panels.json                      your panel definitions (History and log pages)
+data/baseline.json                    your always-on devices
 data/config.json also holds your names ("labels") and prices
 ```
 

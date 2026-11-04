@@ -52,7 +52,7 @@ func main() {
 		hub.broadcast(b)
 	}
 
-	srv := &Server{cfg: cfg, meter: meter, logs: logs, hub: hub, panels: NewPanelStore(filepath.Join(*dataDir, "panels.json")), auth: *auth}
+	srv := &Server{cfg: cfg, meter: meter, logs: logs, hub: hub, panels: NewPanelStore(filepath.Join(*dataDir, "panels.json")), base: NewBaselineStore(filepath.Join(*dataDir, "baseline.json")), auth: *auth}
 	hs := &http.Server{Addr: *addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 
 	go func() {
